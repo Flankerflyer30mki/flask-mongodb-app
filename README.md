@@ -309,7 +309,7 @@ kubectl get hpa flask-hpa --watch
 Terminal 2, generate load from inside the cluster:
 
 ```bash
-kubectl create deployment load-generator --image=busybox:1.36 --replicas=4 -- \
+kubectl create deployment load-generator --image=busybox:1.36 --replicas=6 -- \
   /bin/sh -c "while true; do wget -q -O- http://flask-service:5000/ > /dev/null; done"
 ```
 
@@ -332,34 +332,55 @@ Environment: Minikube v1.39.0 (Kubernetes v1.37.0, Docker driver, 2 CPUs, 4 GB) 
 | Unauthenticated MongoDB access refused | Pass | `MongoServerError: Command find requires authentication`; with credentials, `countDocuments()` returned `2` |
 | DNS resolution | Pass | `mongodb` and `mongodb-0.mongodb.default.svc.cluster.local` resolved to the pod IP `10.244.0.4`; `flask-service` resolved to its ClusterIP `10.104.134.231`; pod `resolv.conf` search list `default.svc.cluster.local svc.cluster.local cluster.local` |
 | Data survives `mongodb-0` deletion | Pass | New pod (different UID) came back Ready; `GET /data` returned both documents; Flask pods needed 0 restarts |
-| HPA scales 2 → 5 under load | Pass | See timeline below |
-| HPA scales back to 2 after load stops | Pass | See timeline below |
+| HPA scales 2 → 5 under load | Pass | 2 → 5 replicas 107 s after load started, see screenshots below |
+| HPA scales back to 2 after load stops | Pass | 5 → 3 → 2 replicas, 392–453 s after load stopped |
 
-**Scale-up** (4 busybox load-generator pods looping on `GET /`):
+#### Autoscaling run (6 load-generator pods)
 
-| Time since load started | Average CPU (of 200m request) | Replicas |
-|---|---|---|
-| 0 s | 1% | 2 |
-| 46 s | 50% | 2 |
-| 108 s | 147% | 2 → 4 |
-| 123 s | 147% | 4 → 5 |
-| 169 s | 110% | 5 (max) |
+Every screenshot below is real `kubectl` output captured during one test run on Minikube.
 
-At 5 replicas, individual pods used 123m–225m CPU and 25–30 Mi memory, well below the 500m / 500M limits.
+**1. Before load:** 2 Flask replicas, CPU at 1% of the 70% target.
 
-**Scale-down** (load generator deleted):
+![Before load](docs/screenshots/01-before.png)
 
-| Time since load stopped | Average CPU | Replicas |
-|---|---|---|
-| 0 s | 110% | 5 |
-| 107 s | 63% | 5 |
-| 168 s | 1% | 5 |
-| 412 s | 1% | 2 |
+**2. Load started:** 6 busybox pods looping on `GET /` through `flask-service`.
+
+![Load generator started](docs/screenshots/02-load-start.png)
+
+**3. Scale-up:** CPU reached 156% of the target at 91 s; the HPA scaled 2 → 5 replicas at 107 s.
+
+![HPA scale-up](docs/screenshots/03-scale-up.png)
+
+**4. At peak:** 5 Flask replicas running. The two original pods used about 310m CPU each (the three new pods had not reported metrics yet), still below the 500m limit, and 26–28 Mi memory against a 500M limit.
+
+![Peak state](docs/screenshots/04-peak.png)
+
+**5. Scale-down:** load stopped; CPU fell to 1% within about 150 s; replicas held at 5 until the 300 s stabilisation window passed, then went 5 → 3 → 2.
+
+![HPA scale-down](docs/screenshots/05-scale-down.png)
+
+**6. HPA events:** the autoscaler's own record of each rescale and why. Counts such as `x3 over 94m` include earlier test runs.
+
+![HPA events](docs/screenshots/06-events.png)
+
+| Phase | Time | Average CPU (of 200m request) | Replicas |
+|---|---|---|---|
+| Load started | 0 s | 1% | 2 |
+| First metrics with load | 30 s | 19% | 2 |
+| Above target | 91 s | 156% | 2 |
+| Scaled up | 107 s | 156% | 5 |
+| Load stopped | 0 s | 156% | 5 |
+| CPU back to idle | 151 s | 1% | 5 |
+| First scale-down | 392 s | 1% | 3 |
+| Back to minimum | 453 s | 1% | 2 |
+
+An earlier run with 4 load-generator pods reached 147% CPU, scaled 2 → 4 → 5 at 108–123 s, and returned to 2 replicas 412 s after the load stopped.
 
 **Observations and issues encountered**
 
-- **Metrics lag.** metrics-server reports roughly every 15–60 s, so the HPA first saw the load at 46 s and only acted at 108 s. For bursty traffic, a higher `minReplicas` (more headroom up front) or a lower CPU target would absorb spikes sooner.
-- **Scale-down is slow on purpose.** CPU fell to 1% within about 3 minutes, but replicas stayed at 5 for another ~4 minutes because of the HPA's default 300 s scale-down stabilisation window, which prevents flapping when load briefly dips.
+- **The HPA has a 10% tolerance.** In a second run with 4 load-generator pods, the HPA scaled 2 → 4 and then held at 4 for ten minutes with CPU at 76%. 4 load generators put the load right at the edge of the threshold. It does not act until current/target is more than 10% away from 1.0, and 76/70 = 1.086. This is intended behaviour (it prevents constant small adjustments); more load (6 load-generator pods) took it to the maximum of 5.
+- **Metrics lag.** metrics-server reports roughly every 15–60 s, so the HPA first saw the full load at 91 s and acted at 107 s. For bursty traffic, a higher `minReplicas` (more headroom up front) or a lower CPU target would absorb spikes sooner.
+- **Scale-down is slow on purpose.** CPU was idle after about 150 s, but replicas stayed at 5 until about 390 s because of the HPA's default 300 s scale-down stabilisation window, which prevents flapping when load briefly dips.
 - **Docker image names must be lowercase.** An early draft of the Deployment used an uppercase placeholder (`DOCKERHUB_USERNAME/...`), which Kubernetes rejects with `InvalidImageName`. Use a real, lowercase Docker Hub username.
 - **Timestamps are UTC.** The welcome message prints the container's local time, which is UTC in `python:3.11-slim`. Set the `TZ` environment variable on the Deployment for a different zone.
 - **`minikube service` keeps a tunnel open.** With the Docker driver on macOS the URL only works while that command is running.
