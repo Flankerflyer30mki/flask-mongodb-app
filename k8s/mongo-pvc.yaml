@@ -1,0 +1,12 @@
+# MongoDB's request for storage. Binds to mongo-pv through storageClassName "manual".
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: manual
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,20 @@
+# Scales the Flask Deployment between 2 and 5 replicas, targeting 70% average CPU utilisation.
+# Requires metrics-server: `minikube addons enable metrics-server`.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flask-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flask-app
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

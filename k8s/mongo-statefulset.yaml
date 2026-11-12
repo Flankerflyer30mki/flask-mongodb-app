@@ -1,0 +1,48 @@
+# MongoDB with authentication enabled.
+# The official image creates a root user from MONGO_INITDB_ROOT_USERNAME / _PASSWORD on first start
+# (when /data/db is empty) and then runs mongod with --auth, so unauthenticated access is refused.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+spec:
+  serviceName: mongodb   # the headless Service that gives this pod its stable DNS name
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7.0   # pinned, never "latest", so every deploy runs the same version
+          ports:
+            - containerPort: 27017
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-secret
+                  key: MONGO_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-secret
+                  key: MONGO_PASSWORD
+          resources:
+            requests:
+              cpu: 200m
+              memory: 250M
+            limits:
+              cpu: 500m
+              memory: 500M
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db   # where mongod stores its data files
+      volumes:
+        - name: mongo-data
+          persistentVolumeClaim:
+            claimName: mongo-pvc

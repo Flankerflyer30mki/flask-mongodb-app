@@ -1,0 +1,15 @@
+# Disk for MongoDB. hostPath stores data on the Minikube node at /data/mongo,
+# which Minikube keeps across `minikube stop` / `minikube start`.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mongo-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain   # keep the data even if the PVC is deleted
+  storageClassName: manual                # matches the PVC, so it binds to this PV and not a dynamic one
+  hostPath:
+    path: /data/mongo

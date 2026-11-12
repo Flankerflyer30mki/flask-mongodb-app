@@ -1,0 +1,6 @@
+venv/
+.env
+.git/
+k8s/
+__pycache__/
+*.md
