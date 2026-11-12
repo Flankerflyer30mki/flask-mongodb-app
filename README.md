@@ -314,7 +314,7 @@ kubectl create deployment load-generator --image=busybox:1.36 --replicas=4 -- \
 ```
 
 Expected behaviour:
-1. CPU in the HPA rises above `70%` within about a minute.
+1. CPU in the HPA rises above `70%` within 1–2 minutes (metrics-server reports with a delay).
 2. Replicas increase from 2 towards 5 (`kubectl get pods -l app=flask-app`).
 3. Stop the load: `kubectl delete deployment load-generator`.
 4. After the default 5-minute scale-down stabilisation window, replicas return to 2.
@@ -323,15 +323,48 @@ If CPU stays below 70%, raise the load: `kubectl scale deployment load-generator
 
 ### 11.5 Results
 
-| Scenario | Result | Notes |
-|---|---|---|
-| POST and GET `/data` through the NodePort Service | | |
-| Data survives `mongodb-0` deletion | | |
-| Unauthenticated MongoDB access refused | | |
-| HPA scales 2 → 5 under load | | peak CPU %, time to scale |
-| HPA scales back to 2 after load stops | | time to scale down |
+Environment: Minikube v1.39.0 (Kubernetes v1.37.0, Docker driver, 2 CPUs, 4 GB) on an Apple Silicon Mac.
 
-**Pre-Kubernetes check (already run):** the image was built and run against `mongo:7.0` with authentication enabled in Docker. `GET /`, `POST /data` and `GET /data` returned the expected responses with credentials; without credentials, `GET /data` returned `500` with `OperationFailure` (authentication required). All 8 manifests pass schema validation with `kubeconform -strict`.
+| Scenario | Result | Evidence |
+|---|---|---|
+| POST and GET `/data` through the NodePort Service | Pass | `{"status":"Data inserted"}`, then `[{"sampleKey":"sampleValue"},{"name":"before-restart"}]` |
+| Requests spread across both Flask replicas | Pass | 7 GET requests: 2 served by one pod, 5 by the other |
+| Unauthenticated MongoDB access refused | Pass | `MongoServerError: Command find requires authentication`; with credentials, `countDocuments()` returned `2` |
+| DNS resolution | Pass | `mongodb` and `mongodb-0.mongodb.default.svc.cluster.local` resolved to the pod IP `10.244.0.4`; `flask-service` resolved to its ClusterIP `10.104.134.231`; pod `resolv.conf` search list `default.svc.cluster.local svc.cluster.local cluster.local` |
+| Data survives `mongodb-0` deletion | Pass | New pod (different UID) came back Ready; `GET /data` returned both documents; Flask pods needed 0 restarts |
+| HPA scales 2 → 5 under load | Pass | See timeline below |
+| HPA scales back to 2 after load stops | Pass | See timeline below |
+
+**Scale-up** (4 busybox load-generator pods looping on `GET /`):
+
+| Time since load started | Average CPU (of 200m request) | Replicas |
+|---|---|---|
+| 0 s | 1% | 2 |
+| 46 s | 50% | 2 |
+| 108 s | 147% | 2 → 4 |
+| 123 s | 147% | 4 → 5 |
+| 169 s | 110% | 5 (max) |
+
+At 5 replicas, individual pods used 123m–225m CPU and 25–30 Mi memory, well below the 500m / 500M limits.
+
+**Scale-down** (load generator deleted):
+
+| Time since load stopped | Average CPU | Replicas |
+|---|---|---|
+| 0 s | 110% | 5 |
+| 107 s | 63% | 5 |
+| 168 s | 1% | 5 |
+| 412 s | 1% | 2 |
+
+**Observations and issues encountered**
+
+- **Metrics lag.** metrics-server reports roughly every 15–60 s, so the HPA first saw the load at 46 s and only acted at 108 s. For bursty traffic, a higher `minReplicas` (more headroom up front) or a lower CPU target would absorb spikes sooner.
+- **Scale-down is slow on purpose.** CPU fell to 1% within about 3 minutes, but replicas stayed at 5 for another ~4 minutes because of the HPA's default 300 s scale-down stabilisation window, which prevents flapping when load briefly dips.
+- **Docker image names must be lowercase.** The placeholder image name in the Deployment must be replaced with a real (lowercase) Docker Hub username before applying, or the pods fail with `InvalidImageName`.
+- **Timestamps are UTC.** The welcome message prints the container's local time, which is UTC in `python:3.11-slim`. Set the `TZ` environment variable on the Deployment for a different zone.
+- **`minikube service` keeps a tunnel open.** With the Docker driver on macOS the URL only works while that command is running.
+
+**Before Kubernetes:** the image was also run against `mongo:7.0` with authentication in plain Docker. Without credentials, `GET /data` returned `500` with `OperationFailure` (authentication required). All 8 manifests pass schema validation with `kubeconform -strict`.
 
 ### Issues to watch for
 
