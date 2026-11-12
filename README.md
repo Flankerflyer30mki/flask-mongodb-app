@@ -117,7 +117,7 @@ curl http://localhost:5000/data
 
 ## 5. Build and push the Docker image
 
-Replace `<dockerhub-username>` with your Docker Hub username.
+The published image is [`ananya0419/flask-mongodb-app:1.0`](https://hub.docker.com/r/ananya0419/flask-mongodb-app) (`linux/amd64` and `linux/arm64`), and `k8s/flask-deployment.yaml` already points at it. To build and push your own copy, replace `<dockerhub-username>` with your Docker Hub username.
 
 ```bash
 # Build
@@ -128,7 +128,7 @@ docker login
 docker push <dockerhub-username>/flask-mongodb-app:1.0
 ```
 
-Then set the same image name in `k8s/flask-deployment.yaml`:
+Then set your image name in `k8s/flask-deployment.yaml`:
 
 ```yaml
 image: <dockerhub-username>/flask-mongodb-app:1.0
@@ -360,7 +360,7 @@ At 5 replicas, individual pods used 123m–225m CPU and 25–30 Mi memory, well 
 
 - **Metrics lag.** metrics-server reports roughly every 15–60 s, so the HPA first saw the load at 46 s and only acted at 108 s. For bursty traffic, a higher `minReplicas` (more headroom up front) or a lower CPU target would absorb spikes sooner.
 - **Scale-down is slow on purpose.** CPU fell to 1% within about 3 minutes, but replicas stayed at 5 for another ~4 minutes because of the HPA's default 300 s scale-down stabilisation window, which prevents flapping when load briefly dips.
-- **Docker image names must be lowercase.** The placeholder image name in the Deployment must be replaced with a real (lowercase) Docker Hub username before applying, or the pods fail with `InvalidImageName`.
+- **Docker image names must be lowercase.** An early draft of the Deployment used an uppercase placeholder (`DOCKERHUB_USERNAME/...`), which Kubernetes rejects with `InvalidImageName`. Use a real, lowercase Docker Hub username.
 - **Timestamps are UTC.** The welcome message prints the container's local time, which is UTC in `python:3.11-slim`. Set the `TZ` environment variable on the Deployment for a different zone.
 - **`minikube service` keeps a tunnel open.** With the Docker driver on macOS the URL only works while that command is running.
 

@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: flask-app
-          image: DOCKERHUB_USERNAME/flask-mongodb-app:1.0   # replace with your Docker Hub username
+          image: ananya0419/flask-mongodb-app:1.0
           ports:
             - containerPort: 5000
           env:
